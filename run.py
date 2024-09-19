@@ -3,6 +3,7 @@ import torch
 import torchaudio
 import os
 import ffmpeg
+import time
 from transformers import pipeline
 
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
@@ -42,6 +43,8 @@ def transcribe_speech(filepath):
 
 def extract_and_transcribe(video_filepath, start_time, end_time):
 
+    log_start_time = time.time()
+
     if not os.path.exists('./tmp/'):
         os.makedirs('./tmp/')
 
@@ -62,7 +65,9 @@ def extract_and_transcribe(video_filepath, start_time, end_time):
 
     output = transcribe_speech('./tmp/output.wav')
     
-    return output
+    log_run_time = time.time() - log_start_time
+
+    return output, log_run_time
 
 # Build Gradio interface
 interface = gr.Interface(
@@ -72,7 +77,10 @@ interface = gr.Interface(
         gr.Number(label="Start Time (in seconds)"), 
         gr.Number(label="End Time (in seconds)\n0 for both Start and End Time for extract all")
     ], 
-    "text"
+    [
+        gr.TextArea(label="Transcription", lines=20, autoscroll=False, show_copy_button=True), 
+        gr.Number(label="Total run time : (in seconds)", precision=2),
+    ]
 )
 
 if __name__ == "__main__":
