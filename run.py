@@ -5,6 +5,10 @@ import os
 import ffmpeg
 import time
 from transformers import pipeline
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 model_name = "biodatlab/whisper-th-large-v3-combined"
@@ -41,6 +45,55 @@ def transcribe_speech(filepath):
     )
     return output["text"]
 
+def llm_chain(input_text):
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        separators=[
+            "\n\n",
+            "\n",
+            " ",
+            ".",
+            ",",
+            "\u200b",  # Zero-width space
+            "\uff0c",  # Fullwidth comma
+            "\u3001",  # Ideographic comma
+            "\uff0e",  # Fullwidth full stop
+            "\u3002",  # Ideographic full stop
+            "",
+        ],
+        chunk_size=10000,
+        chunk_overlap=0,
+        length_function=len,
+        is_separator_regex=False,
+    )
+
+    prompt = ChatPromptTemplate.from_template(
+        """You are text corrector and editor for editing transcription of meeting record.
+        Your task are
+        - split the text into paragraph
+        - add newline between sentences
+        - change spell out number into number (0-9)
+        by retain the original transcript text as much as possible.
+        Retain the language as original one (Thai).
+        DO NOT summarize or add any comment.
+        Process this text
+        
+        {text}"""
+    )
+
+    llm = ChatOllama(
+        model="gemma2-9b-q8-8k:latest",
+        temperature=0,
+        # other params...
+    )
+
+    chain = prompt | llm | StrOutputParser()
+
+    chunks = text_splitter.split_text(input_text)
+    output_text = chain.invoke({"text": "\n".join(chunks)})
+
+    return output_text
+
 def extract_and_transcribe(video_filepath, start_time, end_time):
 
     log_start_time = time.time()
@@ -66,10 +119,12 @@ def extract_and_transcribe(video_filepath, start_time, end_time):
         )
 
     output = transcribe_speech('./tmp/output.wav')
+
+    output_text = llm_chain(output)
     
     log_run_time = time.time() - log_start_time
 
-    return output, log_run_time
+    return output_text, log_run_time
 
 # Build Gradio interface
 interface = gr.Interface(
