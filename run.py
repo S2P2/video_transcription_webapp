@@ -45,9 +45,11 @@ def extract_and_transcribe(video_filepath, start_time, end_time):
 
     log_start_time = time.time()
 
+    # create tmp directory for intermediate audio file
     if not os.path.exists('./tmp/'):
         os.makedirs('./tmp/')
 
+    # extract 1-channel, sample rate 16000, audio from sliced video (0,0 for no slicing)
     if start_time == 0 and end_time == 0:
         out, _ = (ffmpeg
         .input(video_filepath)
