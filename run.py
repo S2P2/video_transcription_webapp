@@ -28,9 +28,12 @@ pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
   task="transcribe"
 )
 
-def transcribe_speech(filepath):
+def transcribe_audio(audio_filepath):
+
+    start_time = time.time()
+
     # Load the .wav file using torchaudio
-    waveform, sample_rate = torchaudio.load(filepath)
+    waveform, sample_rate = torchaudio.load(audio_filepath)
 
     # If the audio is stereo, convert it to mono by averaging the channels
     if waveform.shape[0] == 2:
@@ -43,9 +46,39 @@ def transcribe_speech(filepath):
         audio,
         batch_size=8,
     )
-    return output["text"]
 
-def llm_chain(input_text):
+    run_time = time.time() - start_time
+
+    return output["text"], run_time
+
+    # return "Test Transcription from audio"
+
+def transcribe_video(video_filepath):
+    start_time = time.time()
+
+    # create tmp directory for intermediate audio file
+    if not os.path.exists('./tmp/'):
+        os.makedirs('./tmp/')
+
+    out, _ = (ffmpeg
+        .input(video_filepath)
+        .output('./tmp/output.wav', ac=1, ar='16k')
+        .overwrite_output()
+        .run(capture_stdout=True)
+        )
+
+    output, audio_run_time = transcribe_audio('./tmp/output.wav')
+
+    run_time = time.time() - start_time
+
+    return output, run_time
+
+def copy_from_text_to_text(text):
+    return text
+
+def post_process_text(input_text):
+
+    start_time = time.time()
 
     text_splitter = RecursiveCharacterTextSplitter(
         separators=[
@@ -61,7 +94,7 @@ def llm_chain(input_text):
             "\u3002",  # Ideographic full stop
             "",
         ],
-        chunk_size=10000,
+        chunk_size=8000,
         chunk_overlap=0,
         length_function=len,
         is_separator_regex=False,
@@ -82,7 +115,8 @@ def llm_chain(input_text):
     )
 
     llm = ChatOllama(
-        model="gemma2-9b-q8-8k:latest",
+        model="gemma2-27b-q8-8k:latest",
+        # model="qwen2.5:14b-instruct-q8_0",
         temperature=0,
         # other params...
     )
@@ -90,56 +124,36 @@ def llm_chain(input_text):
     chain = prompt | llm | StrOutputParser()
 
     chunks = text_splitter.split_text(input_text)
-    output_text = chain.invoke({"text": "\n".join(chunks)})
+    output_text = chain.invoke({"text": "".join(chunks)})
+    # output_text = "".join(chain.batch(chunks))
 
-    return output_text
+    run_time = time.time() - start_time
 
-def extract_and_transcribe(video_filepath, start_time, end_time):
+    return output_text, run_time
 
-    log_start_time = time.time()
+with gr.Blocks() as demo:
+    gr.Markdown("# Video/Audio Transcription app")
+    with gr.Row():
+        with gr.Column():
+            video_input = gr.Video()
+            transcribe_video_button = gr.Button("Transcribe from video")
+        with gr.Column():
+            audio_input = gr.Audio(type="filepath")
+            transcribe_audio_button = gr.Button("Transcribe from audio")
+    text_output = gr.TextArea(label="Transcript", show_copy_button=True, interactive=False)
+    transcribe_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
 
-    # create tmp directory for intermediate audio file
-    if not os.path.exists('./tmp/'):
-        os.makedirs('./tmp/')
+    gr.Markdown("# Post process")
+    copy_from_output_button = gr.Button("Copy from transcript")
+    post_process_text_input = gr.TextArea(label="Text input for post-process", show_copy_button=True, info="ถ้าผลลัพธ์เป็นการสรุป ลองตัดข้อความให้สั้นลง")
+    post_process_button = gr.Button("Post-process text")
+    post_process_text_output = gr.TextArea(label="Text output for post-process")
+    post_process_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
 
-    # extract 1-channel, sample rate 16000, audio from sliced video (0,0 for no slicing)
-    if start_time == 0 and end_time == 0:
-        out, _ = (ffmpeg
-        .input(video_filepath)
-        .output('./tmp/output.wav', ac=1, ar='16k')
-        .overwrite_output()
-        .run(capture_stdout=True)
-        )
-    else:
-        out, _ = (ffmpeg
-        .input(video_filepath, ss=start_time, t=end_time-start_time)
-        .output('./tmp/output.wav', ac=1, ar='16k')
-        .overwrite_output()
-        .run(capture_stdout=True)
-        )
-
-    output = transcribe_speech('./tmp/output.wav')
-
-    output_text = llm_chain(output)
-    
-    log_run_time = time.time() - log_start_time
-
-    return output_text, log_run_time
-
-# Build Gradio interface
-interface = gr.Interface(
-    extract_and_transcribe, 
-    [
-        gr.Video(label="Upload Video (.mp4)"), 
-        gr.Number(label="Start Time (in seconds)"), 
-        gr.Number(label="End Time (in seconds)\n0 for both Start and End Time for extract all")
-    ], 
-    [
-        gr.TextArea(label="Transcription", lines=20, autoscroll=False, show_copy_button=True), 
-        gr.Number(label="Total run time : (in seconds)", precision=2),
-    ]
-)
+    transcribe_video_button.click(transcribe_video, inputs=video_input, outputs=[text_output, transcribe_run_time])
+    transcribe_audio_button.click(transcribe_audio, inputs=audio_input, outputs=[text_output, transcribe_run_time])
+    copy_from_output_button.click(copy_from_text_to_text, inputs=text_output, outputs = post_process_text_input)
+    post_process_button.click(post_process_text, inputs=post_process_text_input, outputs=[post_process_text_output, post_process_run_time])
 
 if __name__ == "__main__":
-    # Launch the interface
-    interface.launch()
+    demo.launch()
