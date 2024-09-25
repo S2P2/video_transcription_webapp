@@ -9,47 +9,43 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from faster_whisper import WhisperModel
 
+model = WhisperModel("whisper-th-large-v3-combined-ct2", device="cpu", compute_type="int8")
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
-model_name = "biodatlab/whisper-th-large-v3-combined"
-lang = "th"  # Thai language
+# model_name = "biodatlab/whisper-th-large-v3-combined"
+# lang = "th"  # Thai language
 
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
+# device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-pipe = pipeline(
-    "automatic-speech-recognition",
-    model=model_name,
-    chunk_length_s=30,
-    device=device,
-    return_timestamps=True,
-)
-pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
-  language=lang,
-  task="transcribe"
-)
+# pipe = pipeline(
+#     "automatic-speech-recognition",
+#     model=model_name,
+#     chunk_length_s=30,
+#     device=device,
+#     return_timestamps=True,
+# )
+# pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
+#   language=lang,
+#   task="transcribe"
+# )
 
 def transcribe_audio(audio_filepath):
 
     start_time = time.time()
 
-    # Load the .wav file using torchaudio
-    waveform, sample_rate = torchaudio.load(audio_filepath)
+    segments, info = model.transcribe(audio_filepath, beam_size=5)
 
-    # If the audio is stereo, convert it to mono by averaging the channels
-    if waveform.shape[0] == 2:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
+    print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
-    # Ensure the waveform is in the expected format
-    audio = {"array": waveform.squeeze().numpy(), "sampling_rate": sample_rate}
-
-    output = pipe(
-        audio,
-        batch_size=8,
-    )
+    output = []
+    for segment in segments:
+        print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+        output.append(segment.text)
 
     run_time = time.time() - start_time
 
-    return output["text"], run_time
+    return "".join(output), run_time
 
     # return "Test Transcription from audio"
 
@@ -115,7 +111,8 @@ def post_process_text(input_text):
     )
 
     llm = ChatOllama(
-        model="gemma2-27b-q8-8k:latest",
+        # model="gemma2-27b-q8-8k:latest",
+        model="gemma2:9b",
         # model="qwen2.5:14b-instruct-q8_0",
         temperature=0,
         # other params...
