@@ -1,10 +1,10 @@
 import gradio as gr
-import torch
-import torchaudio
+# import torch
+# import torchaudio
 import os
 import ffmpeg
 import time
-from transformers import pipeline
+# from transformers import pipeline
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
