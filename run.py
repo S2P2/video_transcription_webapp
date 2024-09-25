@@ -9,9 +9,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, BatchedInferencePipeline
 
 model = WhisperModel("whisper-th-large-v3-combined-ct2", device="cpu", compute_type="int8")
+batched_model = BatchedInferencePipeline(model=model)
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 # model_name = "biodatlab/whisper-th-large-v3-combined"
 # lang = "th"  # Thai language
@@ -34,7 +35,7 @@ def transcribe_audio(audio_filepath):
 
     start_time = time.time()
 
-    segments, info = model.transcribe(audio_filepath, beam_size=5)
+    segments, info = batched_model.transcribe(audio_filepath, batch_size=16)
 
     print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
