@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
-model = WhisperModel("whisper-th-large-v3-combined-ct2", device="cpu", compute_type="int8")
+model = WhisperModel("terasut/whisper-th-large-v3-combined-ct2", device="cuda", compute_type="float16")
 batched_model = BatchedInferencePipeline(model=model)
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 # model_name = "biodatlab/whisper-th-large-v3-combined"
@@ -46,19 +46,27 @@ def transcribe_audio(audio_filepath):
 
     run_time = time.time() - start_time
 
-    return "".join(output), run_time
+    return "\n".join(output), run_time
 
     # return "Test Transcription from audio"
 
-def transcribe_video(video_filepath):
+def transcribe_video(video_filepath, video_start_time, video_end_time):
     start_time = time.time()
 
     # create tmp directory for intermediate audio file
     if not os.path.exists('./tmp/'):
         os.makedirs('./tmp/')
 
-    out, _ = (ffmpeg
+    if video_start_time == 0 and video_end_time == 0:
+        out, _ = (ffmpeg
         .input(video_filepath)
+        .output('./tmp/output.wav', ac=1, ar='16k')
+        .overwrite_output()
+        .run(capture_stdout=True)
+        )
+    else:
+        out, _ = (ffmpeg
+        .input(video_filepath, ss=video_start_time, t=video_end_time-video_start_time)
         .output('./tmp/output.wav', ac=1, ar='16k')
         .overwrite_output()
         .run(capture_stdout=True)
@@ -112,8 +120,8 @@ def post_process_text(input_text):
     )
 
     llm = ChatOllama(
-        # model="gemma2-27b-q8-8k:latest",
-        model="gemma2:9b",
+        model="gemma2-27b-q8-8k:latest",
+        # model="gemma2:9b",
         # model="qwen2.5:14b-instruct-q8_0",
         temperature=0,
         # other params...
@@ -134,6 +142,8 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             video_input = gr.Video()
+            video_start_time = gr.Number(label="Start Time (in seconds)")
+            video_end_time = gr.Number(label="End Time (in seconds)\n0 for both Start and End Time for extract all")
             transcribe_video_button = gr.Button("Transcribe from video")
         with gr.Column():
             audio_input = gr.Audio(type="filepath")
@@ -148,7 +158,7 @@ with gr.Blocks() as demo:
     post_process_text_output = gr.TextArea(label="Text output for post-process")
     post_process_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
 
-    transcribe_video_button.click(transcribe_video, inputs=video_input, outputs=[text_output, transcribe_run_time])
+    transcribe_video_button.click(transcribe_video, inputs=[video_input, video_start_time, video_end_time], outputs=[text_output, transcribe_run_time])
     transcribe_audio_button.click(transcribe_audio, inputs=audio_input, outputs=[text_output, transcribe_run_time])
     copy_from_output_button.click(copy_from_text_to_text, inputs=text_output, outputs = post_process_text_input)
     post_process_button.click(post_process_text, inputs=post_process_text_input, outputs=[post_process_text_output, post_process_run_time])
