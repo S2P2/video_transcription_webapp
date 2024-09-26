@@ -11,7 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
-model_name = "biodatlab/whisper-th-large-v3-combined"
+# model_name = "biodatlab/whisper-th-large-v3-combined"
+model_name = "biodatlab/distill-whisper-th-small"
 lang = "th"  # Thai language
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -114,14 +115,23 @@ def post_process_text(input_text):
         {text}"""
     )
 
+    prompt_cpu = ChatPromptTemplate.from_template(
+        """Your task is to add newline character between sentences
+        Process this text :
+        
+        {text}"""
+    )
+
     llm = ChatOllama(
-        model="gemma2-27b-q8-8k:latest",
+        # model="gemma2-27b-q8-8k:latest",
+        # model="gemma2:2b",
+        model="qwen2.5:1.5b",
         # model="qwen2.5:14b-instruct-q8_0",
         temperature=0,
         # other params...
     )
 
-    chain = prompt | llm | StrOutputParser()
+    chain = prompt_cpu | llm | StrOutputParser()
 
     chunks = text_splitter.split_text(input_text)
     output_text = chain.invoke({"text": "".join(chunks)})
