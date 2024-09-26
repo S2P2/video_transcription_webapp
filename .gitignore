@@ -163,3 +163,4 @@ cython_debug/
 
 # project tmp
 tmp/
+whisper-th-large-v3-combined-ct2/
