@@ -1,35 +1,25 @@
 import gradio as gr
-# import torch
-# import torchaudio
 import os
 import ffmpeg
 import time
-# from transformers import pipeline
+from torch import cuda
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
-model = WhisperModel("terasut/whisper-th-large-v3-combined-ct2", device="cuda", compute_type="float16")
-batched_model = BatchedInferencePipeline(model=model)
+WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
-# model_name = "biodatlab/whisper-th-large-v3-combined"
-# lang = "th"  # Thai language
 
-# device = "cuda:0" if torch.cuda.is_available() else "cpu"
+LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
+# LLM_MODEL_NAME = "gemma2:9b",
+# LLM_MODEL_NAME = "qwen2.5:14b-instruct-q8_0",
 
-# pipe = pipeline(
-#     "automatic-speech-recognition",
-#     model=model_name,
-#     chunk_length_s=30,
-#     device=device,
-#     return_timestamps=True,
-# )
-# pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
-#   language=lang,
-#   task="transcribe"
-# )
+device = "cuda" if cuda.is_available() else "cpu"
+
+model = WhisperModel(WHISPER_CT_MODEL_NAME, device=device, compute_type="float16")
+batched_model = BatchedInferencePipeline(model=model)
 
 def transcribe_audio(audio_filepath):
 
@@ -40,13 +30,20 @@ def transcribe_audio(audio_filepath):
     print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
     output = []
+    output_with_timestamps = []
+    
     for segment in segments:
-        print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+        formatted_string = "[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text)
+        print(formatted_string)
         output.append(segment.text)
+        output_with_timestamps.append(formatted_string)
+
+    output = "\n".join(output)
+    output_with_timestamps = "\n".join(output_with_timestamps)
 
     run_time = time.time() - start_time
 
-    return "\n".join(output), run_time
+    return output, output_with_timestamps, run_time
 
     # return "Test Transcription from audio"
 
@@ -72,11 +69,11 @@ def transcribe_video(video_filepath, video_start_time, video_end_time):
         .run(capture_stdout=True)
         )
 
-    output, audio_run_time = transcribe_audio('./tmp/output.wav')
+    output, output_with_timestamps, audio_run_time = transcribe_audio('./tmp/output.wav')
 
     run_time = time.time() - start_time
 
-    return output, run_time
+    return output, output_with_timestamps, run_time
 
 def copy_from_text_to_text(text):
     return text
@@ -120,10 +117,9 @@ def post_process_text(input_text):
     )
 
     llm = ChatOllama(
-        model="gemma2-27b-q8-8k:latest",
-        # model="gemma2:9b",
-        # model="qwen2.5:14b-instruct-q8_0",
+        model=LLM_MODEL_NAME,
         temperature=0,
+        num_ctx=8192,
         # other params...
     )
 
@@ -131,7 +127,6 @@ def post_process_text(input_text):
 
     chunks = text_splitter.split_text(input_text)
     output_text = chain.invoke({"text": "".join(chunks)})
-    # output_text = "".join(chain.batch(chunks))
 
     run_time = time.time() - start_time
 
@@ -148,7 +143,11 @@ with gr.Blocks() as demo:
         with gr.Column():
             audio_input = gr.Audio(type="filepath")
             transcribe_audio_button = gr.Button("Transcribe from audio")
-    text_output = gr.TextArea(label="Transcript", show_copy_button=True, interactive=False)
+    with gr.Row():
+        with gr.Column():
+            text_output = gr.TextArea(label="Transcript", show_copy_button=True, interactive=False)
+        with gr.Column():
+            text_output_timestamps = gr.TextArea(label="Transcript with timestamps", show_copy_button=True, interactive=False)
     transcribe_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
 
     gr.Markdown("# Post process")
@@ -158,8 +157,8 @@ with gr.Blocks() as demo:
     post_process_text_output = gr.TextArea(label="Text output for post-process")
     post_process_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
 
-    transcribe_video_button.click(transcribe_video, inputs=[video_input, video_start_time, video_end_time], outputs=[text_output, transcribe_run_time])
-    transcribe_audio_button.click(transcribe_audio, inputs=audio_input, outputs=[text_output, transcribe_run_time])
+    transcribe_video_button.click(transcribe_video, inputs=[video_input, video_start_time, video_end_time], outputs=[text_output, text_output_timestamps, transcribe_run_time])
+    transcribe_audio_button.click(transcribe_audio, inputs=audio_input, outputs=[text_output, text_output_timestamps, transcribe_run_time])
     copy_from_output_button.click(copy_from_text_to_text, inputs=text_output, outputs = post_process_text_input)
     post_process_button.click(post_process_text, inputs=post_process_text_input, outputs=[post_process_text_output, post_process_run_time])
 
