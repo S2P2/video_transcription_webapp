@@ -121,8 +121,7 @@ async def post_process_text(input_text):
         โปรดใช้ภาษาไทยเป็นหลัก (ปนภาษาอังกฤษได้) ถึงแม้ว่าคำสั่งจะเป็นภาษาอังกฤษ
         The following is a set of summaries from meeting transcript:
         {docs}
-        Take these and distill it into a final, consolidated summary
-        of the main themes.
+        Take these and combined them into one final summary.
         you can use Thai and English, but your user are Thai
         """
 
@@ -271,7 +270,7 @@ async def post_process_text(input_text):
 
     run_time = time.time() - start_time
 
-    return step['generate_final_summary']['final_summary'], run_time
+    return step['generate_final_summary']['final_summary'], run_time, step
 
 with gr.Blocks() as demo:
     gr.Markdown("# Video/Audio Transcription app")
@@ -293,7 +292,7 @@ with gr.Blocks() as demo:
 
     gr.Markdown("# Summarization")
     copy_from_output_button = gr.Button("Copy from transcript")
-    post_process_text_input = gr.TextArea(label="Text input for post-process", show_copy_button=True, info="ถ้าผลลัพธ์เป็นการสรุป ลองตัดข้อความให้สั้นลง")
+    post_process_text_input = gr.TextArea(label="Text input for post-process", show_copy_button=True)
     post_process_button = gr.Button("Summarize text")
     # post_process_text_output = gr.TextArea(label="Text output for post-process", show_copy_button=True)
     post_process_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
