@@ -12,7 +12,8 @@ from faster_whisper import WhisperModel, BatchedInferencePipeline
 WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 
-LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
+# LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
+LLM_MODEL_NAME = "llama3.1:70b"
 # LLM_MODEL_NAME = "gemma2:9b",
 # LLM_MODEL_NAME = "qwen2.5:14b-instruct-q8_0",
 
@@ -44,8 +45,6 @@ def transcribe_audio(audio_filepath):
     run_time = time.time() - start_time
 
     return output, output_with_timestamps, run_time
-
-    # return "Test Transcription from audio"
 
 def transcribe_video(video_filepath, video_start_time, video_end_time):
     start_time = time.time()
@@ -103,15 +102,7 @@ def post_process_text(input_text):
     )
 
     prompt = ChatPromptTemplate.from_template(
-        """You are text corrector and editor for editing transcription of meeting record.
-        Your task are
-        - split the text into paragraph
-        - add newline between sentences
-        - change spell out number into number (0-9)
-        by retain the original transcript text as much as possible.
-        Retain the language as original one (Thai).
-        DO NOT summarize or add any comment.
-        Process this text
+        """Write a summary of the following:
         
         {text}"""
     )
