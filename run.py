@@ -21,6 +21,7 @@ langfuse_handler = CallbackHandler(
 )
 
 WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
+# WHISPER_CT_MODEL_NAME = "model/moonsoon-whisper-medium-gigaspeech2-ct2"
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 
 # LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
@@ -55,6 +56,12 @@ def transcribe_audio(audio_filepath):
     output_with_timestamps = "\n".join(output_with_timestamps)
 
     run_time = time.time() - start_time
+    
+    with open("./tmp/output.txt", "w") as text_file:
+        text_file.write(output)
+    
+    with open("./tmp/output_with_timestamps.txt", "w") as text_file:
+        text_file.write(output_with_timestamps)
 
     return output, output_with_timestamps, run_time
 

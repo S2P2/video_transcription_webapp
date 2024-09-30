@@ -163,4 +163,7 @@ cython_debug/
 
 # project tmp
 tmp/
+
+#model
 whisper-th-large-v3-combined-ct2/
+model/
