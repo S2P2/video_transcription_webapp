@@ -9,16 +9,20 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 # from langchain_text_splitters import CharacterTextSplitter
 from faster_whisper import WhisperModel, BatchedInferencePipeline
-from langfuse.callback import CallbackHandler
+from phoenix.otel import register
+from openinference.instrumentation.langchain import LangChainInstrumentor
+
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-langfuse_handler = CallbackHandler(
-    public_key=os.getenv('LANGFUSE_PUBLIC_KEY'),
-    secret_key=os.getenv('LANGFUSE_SECRET_KEY'),
-    host="http://localhost:3000"
+tracer_provider = register(
+  project_name="video-summarize", # Default is 'default'
+  endpoint="http://localhost:6006/v1/traces",
 )
+
+LangChainInstrumentor().instrument(tracer_provider=tracer_provider) 
 
 WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
 # WHISPER_CT_MODEL_NAME = "model/moonsoon-whisper-medium-gigaspeech2-ct2"
@@ -267,7 +271,7 @@ async def post_process_text(input_text):
 
     async for step in app.astream(
         {"contents": [doc.page_content for doc in split_docs]},
-        config={"recursion_limit": 10, "callbacks": [langfuse_handler]}
+        config={"recursion_limit": 10}
     ):
         print(list(step.keys()))
 
