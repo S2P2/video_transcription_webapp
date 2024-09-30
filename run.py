@@ -24,8 +24,8 @@ WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
 # WHISPER_CT_MODEL_NAME = "model/moonsoon-whisper-medium-gigaspeech2-ct2"
 # model_name = "scb10x/monsoon-whisper-medium-gigaspeech2"
 
-# LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
-LLM_MODEL_NAME = "gemma2:9b-instruct-q8_0"
+LLM_MODEL_NAME = "gemma2:27b-instruct-q8_0"
+# LLM_MODEL_NAME = "gemma2:9b-instruct-q8_0"
 # LLM_MODEL_NAME = "llama3.1:70b"
 # LLM_MODEL_NAME = "gemma2:9b",
 # LLM_MODEL_NAME = "qwen2.5:14b-instruct-q8_0",
@@ -113,7 +113,7 @@ async def post_process_text(input_text):
 
     map_prompt = ChatPromptTemplate.from_messages(
         # [("system", "Write a concise summary of the following (in original language):\\n\\n{context}")]
-        [("system", "สรุปการสนทนาต่อไปนี้ แยกเป็นหัวข้อ:\\n\\n{context}")]
+        [("system", "สรุปการสนทนาต่อไปนี้ แยกเป็นหัวข้อ:\n\n{context}")]
 )
     llm = ChatOllama(
         model=LLM_MODEL_NAME,
@@ -128,7 +128,7 @@ async def post_process_text(input_text):
         โปรดใช้ภาษาไทยเป็นหลัก (ปนภาษาอังกฤษได้) ถึงแม้ว่าคำสั่งจะเป็นภาษาอังกฤษ
         The following is a set of summaries from meeting transcript:
         {docs}
-        Take these and combined them into one final summary.
+        Take these and combined them into one detailed final summary.
         you can use Thai and English, but your user are Thai
         """
 
@@ -274,6 +274,9 @@ async def post_process_text(input_text):
     # chain = prompt | llm | StrOutputParser()
 
     # output_text = chain.invoke({"text": "".join(chunks)})
+
+    with open("./tmp/summary.txt", "w") as text_file:
+        text_file.write(step['generate_final_summary']['final_summary'])
 
     run_time = time.time() - start_time
 
