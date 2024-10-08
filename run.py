@@ -3,6 +3,7 @@ import os
 import ffmpeg
 import time
 import logging
+from typing import Tuple
 from torch import cuda
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from dotenv import load_dotenv
@@ -27,7 +28,63 @@ model = WhisperModel(WHISPER_CT_MODEL_NAME, device=device, compute_type=COMPUTE_
 batched_model = BatchedInferencePipeline(model=model)
 logging.info("Model loaded successfully")
 
-def transcribe_audio(audio_filepath):
+def check_file_exists(filepath: str) -> bool:
+    """
+    Checks if the provided file exists.
+
+    Args:
+        filepath (str): The path to the file.
+
+    Returns:
+        bool: True if the file exists, False otherwise.
+    """
+    if not os.path.exists(filepath):
+        logging.error(f"File not found: {filepath}")
+        return False
+    return True
+
+def create_tmp_folder() -> None:
+    """
+    Ensures that the temporary folder exists.
+    """
+    if not os.path.exists('./tmp/'):
+        os.makedirs('./tmp/')
+        logging.info("Temporary folder created at ./tmp/")
+
+def save_transcription_to_file(filepath: str, content: str) -> None:
+    """
+    Saves the transcription content to a file.
+
+    Args:
+        filepath (str): The path where the file will be saved.
+        content (str): The content to be saved.
+    """
+    with open(filepath, "w") as text_file:
+        text_file.write(content)
+    logging.info(f"Transcription saved to {filepath}")
+
+def format_transcription(segments) -> Tuple[str, str]:
+    """
+    Formats the transcription segments into plain text and timestamped formats.
+
+    Args:
+        segments (list): List of transcribed segments.
+
+    Returns:
+        tuple: (Plain transcription, transcription with timestamps).
+    """
+    output = []
+    output_with_timestamps = []
+
+    for segment in segments:
+        formatted_string = "[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text)
+        logging.debug(formatted_string)
+        output.append(segment.text)
+        output_with_timestamps.append(formatted_string)
+
+    return "\n".join(output), "\n".join(output_with_timestamps)
+
+def transcribe_audio(audio_filepath: str) -> Tuple[str, str, float]:
     """
     Transcribes the given audio file using the Whisper model.
 
@@ -38,57 +95,66 @@ def transcribe_audio(audio_filepath):
         tuple: A tuple containing the transcription (str), transcription with timestamps (str),
                and the time taken for transcription (float).
     """
-    # Check if the audio file exists
-    if not os.path.exists(audio_filepath):
-        logging.error(f"Audio file not found: {audio_filepath}")
+    if not check_file_exists(audio_filepath):
         return "Error: Audio file not found.", "", 0
     
     try:
         start_time = time.time()
         logging.info(f"Starting audio transcription for: {audio_filepath}")
 
-        # Transcribe the audio using batching for faster process
+        # Prepare for audio transcription
         segments, info = batched_model.transcribe(audio_filepath, batch_size=16)
         logging.info("Audio transcribe - Done.\nDetected language '%s' with probability %f" % (info.language, info.language_probability))
 
-        output = []  # List to store the transcription text
-        output_with_timestamps = []  # List to store the transcription with timestamps
-        
-        # Iterate through the transcribed segments (generator method for memory efficiency)
-        for segment in segments:
-            formatted_string = "[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text)
-            logging.debug(formatted_string)
-            output.append(segment.text)
-            output_with_timestamps.append(formatted_string)
+        # Transcribe the audio
+        plain_text, text_with_timestamps = format_transcription(segments)
 
-        output = "\n".join(output)
-        output_with_timestamps = "\n".join(output_with_timestamps)
-
-        # Ensure the temporary directory exists to save files
-        if not os.path.exists('./tmp/'):
-            os.makedirs('./tmp/')
-            logging.info("Temporary folder created at ./tmp/")
-        
-        # Save the transcription to a text file
-        with open("./tmp/output.txt", "w") as text_file:
-            text_file.write(output)
-            logging.info("Transcription saved to ./tmp/output.txt")
-        
-        # Save the transcription with timestamps to a separate text file
-        with open("./tmp/output_with_timestamps.txt", "w") as text_file:
-            text_file.write(output_with_timestamps)
-            logging.info("Transcription with timestamps saved to ./tmp/output_with_timestamps.txt")
+        # Create the tmp directory and save files
+        create_tmp_folder()
+        save_transcription_to_file("./tmp/transcript.txt", plain_text)
+        save_transcription_to_file("./tmp/transcript_with_timestamps.txt", text_with_timestamps)
 
         run_time = time.time() - start_time
         logging.info(f"Audio transcription completed in {run_time:.2f} seconds")
 
-        return output, output_with_timestamps, run_time
+        return plain_text, text_with_timestamps, run_time
     
     except Exception as e:
         logging.error(f"Error during audio transcription: {str(e)}")
         return f"Error occured: {str(e)}", "", 0
 
-def transcribe_video(video_filepath, video_start_time, video_end_time):
+def extract_audio_from_video(video_filepath: str, start_time: float, end_time: float) -> str:
+    """
+    Extracts audio from the video file using ffmpeg.
+
+    Args:
+        video_filepath (str): Path to the video file.
+        start_time (float): Start time for extraction.
+        end_time (float): End time for extraction.
+
+    Returns:
+        str: Path to the extracted audio file.
+    """
+    logging.info("Extracting audio from video...")
+
+    audio_output = './tmp/tmp_audio.wav'
+    if start_time == 0 and end_time == 0:
+        logging.info("Extracting audio from the full video...")
+        out, _ = (ffmpeg.input(video_filepath)
+                  .output(audio_output, ac=1, ar='16k')
+                  .overwrite_output()
+                  .run(capture_stdout=True))
+    else:
+        logging.info(f"Extracting audio from {start_time} to {end_time} seconds...")
+        out, _ = (ffmpeg.input(video_filepath, ss=start_time, t=end_time - start_time)
+                  .output(audio_output, ac=1, ar='16k')
+                  .overwrite_output()
+                  .run(capture_stdout=True))
+
+    logging.info("Audio extraction completed")
+    return audio_output
+
+def transcribe_video(video_filepath: str, video_start_time: float, video_end_time: float) -> Tuple[str, str, float]:
     """
     Extracts audio from the video file, transcribes the audio, and returns the transcription.
 
@@ -101,48 +167,25 @@ def transcribe_video(video_filepath, video_start_time, video_end_time):
         tuple: A tuple containing the transcription (str), transcription with timestamps (str),
                and the total time taken (float).
     """
-    # Check if the video file exists
-    if not os.path.exists(video_filepath):
-        logging.error(f"Video file not found: {video_filepath}")
+    if not check_file_exists(video_filepath):
         return "Error: Video file not found.", "", 0
     
     try:
         start_time = time.time()
         logging.info(f"Starting video transcription for: {video_filepath}")
 
-        # Ensure the temporary directory exists to save the extracted audio
-        if not os.path.exists('./tmp/'):
-            os.makedirs('./tmp/')
-            logging.info("Temporary folder created at ./tmp/")
-
-        # Use FFmpeg to extract audio from the full video or from the specified time range
-        if video_start_time == 0 and video_end_time == 0:
-            logging.info("Extracting audio from the full video...")
-            out, _ = (ffmpeg
-            .input(video_filepath)
-            .output('./tmp/output.wav', ac=1, ar='16k')
-            .overwrite_output()
-            .run(capture_stdout=True)
-            )
-        else:
-            logging.info(f"Extracting audio from {video_start_time} to {video_end_time} seconds...")
-            out, _ = (ffmpeg
-            .input(video_filepath, ss=video_start_time, t=video_end_time-video_start_time)
-            .output('./tmp/output.wav', ac=1, ar='16k')
-            .overwrite_output()
-            .run(capture_stdout=True)
-            )
-
-        logging.info("Audio extraction from video completed")
+        # Extract audio from video
+        create_tmp_folder()
+        audio_filepath = extract_audio_from_video(video_filepath, video_start_time, video_end_time)
 
         # Transcribe the extracted audio
-        output, output_with_timestamps, audio_run_time = transcribe_audio('./tmp/output.wav')
+        output, output_with_timestamps, audio_run_time = transcribe_audio(audio_filepath)
 
         run_time = time.time() - start_time
         logging.info(f"Video transcription completed in {run_time:.2f} seconds")
-
+        
         return output, output_with_timestamps, run_time
-    
+
     except Exception as e:
         logging.error(f"Error during video transcription: {str(e)}")
         return f"Error occurred: {str(e)}", "", 0
@@ -156,8 +199,8 @@ with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             video_input = gr.Video()
-            video_start_time = gr.Number(label="Start Time (in seconds)")
-            video_end_time = gr.Number(label="End Time (in seconds)\n0 for both Start and End Time for extract all")
+            video_start_time = gr.Number(label="Start Time (in seconds)", value=0)
+            video_end_time = gr.Number(label="End Time (in seconds)\n0 for both Start and End Time for extract all", value=0)
             transcribe_video_button = gr.Button("Transcribe from video")
         with gr.Column():
             audio_input = gr.Audio(type="filepath")
