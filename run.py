@@ -63,6 +63,19 @@ def save_transcription_to_file(filepath: str, content: str) -> None:
         text_file.write(content)
     logging.info(f"Transcription saved to {filepath}")
 
+def format_time(seconds: float) -> str:
+    """
+    Converts time in seconds to a more readable format (H:M:S) using the time module.
+
+    Args:
+        seconds (float): Time in seconds.
+
+    Returns:
+        str: Time in H:M:S format.
+    """
+    time_struct = time.gmtime(int(seconds))  # Convert to time structure
+    return time.strftime("%H:%M:%S", time_struct)
+
 def format_transcription(segments) -> Tuple[str, str]:
     """
     Formats the transcription segments into plain text and timestamped formats.
@@ -77,8 +90,11 @@ def format_transcription(segments) -> Tuple[str, str]:
     output_with_timestamps = []
 
     for segment in segments:
-        formatted_string = "[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text)
-        logging.debug(formatted_string)
+        # Use the updated format_time function to format the start and end times
+        start_time_formatted = format_time(segment.start)
+        end_time_formatted = format_time(segment.end)
+        
+        formatted_string = f"[{start_time_formatted} -> {end_time_formatted}] {segment.text}"
         output.append(segment.text)
         output_with_timestamps.append(formatted_string)
 
