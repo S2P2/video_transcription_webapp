@@ -3,9 +3,14 @@ import os
 import ffmpeg
 import time
 import logging
+import numpy as np
 from typing import Tuple
-from torch import cuda
+import torch
 from faster_whisper import WhisperModel, BatchedInferencePipeline
+from pyannote.audio import Pipeline
+from torchaudio import functional as F
+# from transformers import pipeline
+from transformers.pipelines.audio_utils import ffmpeg_read
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -17,10 +22,11 @@ logging.basicConfig(filename='transcription_app.log', level=logging.INFO,
 
 # Whisper model configuration
 WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
+DIARIZER_MODEL_NAME = "pyannote/speaker-diarization-3.1"
 COMPUTE_TYPE = "float16"
 
 # Check if CUDA is available and set the device accordingly
-device = "cuda" if cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 logging.info(f"Loading {WHISPER_CT_MODEL_NAME} model on {device}, compute_type={COMPUTE_TYPE}")
 
 # Load the Whisper model and create a batched inference pipeline
@@ -99,6 +105,142 @@ def format_transcription(segments) -> Tuple[str, str]:
         output_with_timestamps.append(formatted_string)
 
     return "\n".join(output), "\n".join(output_with_timestamps)
+
+# from speechbox.diarize.ASRDiarizationPipeline.preprocess
+# (see https://github.com/huggingface/speechbox/blob/e7339dc021c8aa3047f824fb5c24b5b2c8197a76/src/speechbox/diarize.py#L174)
+def preprocess_for_diarizer(inputs):
+    if isinstance(inputs, str):
+        if inputs.startswith("http://") or inputs.startswith("https://"):
+            # We need to actually check for a real protocol, otherwise it's impossible to use a local file
+            # like http_huggingface_co.png
+            inputs = requests.get(inputs).content
+        else:
+            with open(inputs, "rb") as f:
+                inputs = f.read()
+
+    if isinstance(inputs, bytes):
+        inputs = ffmpeg_read(inputs, self.sampling_rate)
+
+    if isinstance(inputs, dict):
+        # Accepting `"array"` which is the key defined in `datasets` for better integration
+        if not ("sampling_rate" in inputs and ("raw" in inputs or "array" in inputs)):
+            raise ValueError(
+                "When passing a dictionary to ASRDiarizePipeline, the dict needs to contain a "
+                '"raw" key containing the numpy array representing the audio and a "sampling_rate" key, '
+                "containing the sampling_rate associated with that array"
+            )
+
+        _inputs = inputs.pop("raw", None)
+        if _inputs is None:
+            # Remove path which will not be used from `datasets`.
+            inputs.pop("path", None)
+            _inputs = inputs.pop("array", None)
+        in_sampling_rate = inputs.pop("sampling_rate")
+        inputs = _inputs
+        if in_sampling_rate != self.sampling_rate:
+            inputs = F.resample(torch.from_numpy(inputs), in_sampling_rate, self.sampling_rate).numpy()
+
+    if not isinstance(inputs, np.ndarray):
+        raise ValueError(f"We expect a numpy ndarray as input, got `{type(inputs)}`")
+    if len(inputs.shape) != 1:
+        raise ValueError("We expect a single channel audio input for ASRDiarizePipeline")
+
+    # diarization model expects float32 torch tensor of shape `(channels, seq_len)`
+    diarizer_inputs = torch.from_numpy(inputs).float()
+    diarizer_inputs = diarizer_inputs.unsqueeze(0)
+
+    return inputs, diarizer_inputs
+
+# from speechbox.diarize.ASRDiarizationPipeline
+# (see https://github.com/huggingface/speechbox/blob/e7339dc021c8aa3047f824fb5c24b5b2c8197a76/src/speechbox/diarize.py#L103)
+def diarization(audio_filepath):
+
+    start_time = time.time()
+
+    group_by_speaker = True
+
+    pipeline = Pipeline.from_pretrained(
+        DIARIZER_MODEL_NAME,
+        use_auth_token=os.getenv("HF_TOKEN")
+    )
+
+    pipeline.to(torch.device(device))
+
+    diarization = pipeline(audio_filepath)
+
+    segments = []
+    for segment, track, label in diarization.itertracks(yield_label=True):
+        segments.append({'segment': {'start': segment.start, 'end': segment.end},
+                            'track': track,
+                            'label': label})
+
+    # diarizer output may contain consecutive segments from the same speaker (e.g. {(0 -> 1, speaker_1), (1 -> 1.5, speaker_1), ...})
+    # we combine these segments to give overall timestamps for each speaker's turn (e.g. {(0 -> 1.5, speaker_1), ...})
+    new_segments = []
+    prev_segment = cur_segment = segments[0]
+
+    for i in range(1, len(segments)):
+        cur_segment = segments[i]
+
+        # check if we have changed speaker ("label")
+        if cur_segment["label"] != prev_segment["label"] and i < len(segments):
+            # add the start/end times for the super-segment to the new list
+            new_segments.append(
+                {
+                    "segment": {"start": prev_segment["segment"]["start"], "end": cur_segment["segment"]["start"]},
+                    "speaker": prev_segment["label"],
+                }
+            )
+            prev_segment = segments[i]
+
+    # add the last segment(s) if there was no speaker change
+    new_segments.append(
+        {
+            "segment": {"start": prev_segment["segment"]["start"], "end": cur_segment["segment"]["end"]},
+            "speaker": prev_segment["label"],
+        }
+    )
+
+    asr_segments, asr_info = batched_model.transcribe(audio_filepath, batch_size=16)
+
+    transcript = []
+
+    for segment in asr_segments:
+        transcript.append({
+        "text": segment.text,
+        "timestamp": [segment.start, segment.end]
+        })
+
+    # get the end timestamps for each chunk from the ASR output
+    end_timestamps = np.array([chunk["timestamp"][-1] for chunk in transcript])
+    segmented_preds = []
+
+    # align the diarizer timestamps and the ASR timestamps
+    for segment in new_segments:
+        # get the diarizer end timestamp
+        end_time = segment["segment"]["end"]
+        # find the ASR end timestamp that is closest to the diarizer's end timestamp and cut the transcript to here
+        upto_idx = np.argmin(np.abs(end_timestamps - end_time))
+
+        if group_by_speaker:
+            segmented_preds.append(
+                {
+                    "speaker": segment["speaker"],
+                    "text": "".join([chunk["text"] for chunk in transcript[: upto_idx + 1]]),
+                    "timestamp": (transcript[0]["timestamp"][0], transcript[upto_idx]["timestamp"][1]),
+                }
+            )
+        else:
+            for i in range(upto_idx + 1):
+                segmented_preds.append({"speaker": segment["speaker"], **transcript[i]})
+
+        # crop the transcripts and timestamp lists according to the latest timestamp (for faster argmin)
+        transcript = transcript[upto_idx + 1 :]
+        end_timestamps = end_timestamps[upto_idx + 1 :]
+
+    run_time = time.time() - start_time
+
+    return segmented_preds, segmented_preds, run_time
 
 def transcribe_audio(audio_filepath: str) -> Tuple[str, str, float]:
     """
@@ -221,6 +363,7 @@ with gr.Blocks() as demo:
         with gr.Column():
             audio_input = gr.Audio(type="filepath")
             transcribe_audio_button = gr.Button("Transcribe from audio")
+            diarizatize_audio_button = gr.Button("Diarize from audio")
 
     # Display for total runtime and transcript outputs
     transcribe_run_time = gr.Number(label="Total run time : (in seconds)", precision=2)
@@ -233,6 +376,7 @@ with gr.Blocks() as demo:
     # Linking buttons with transcription functions
     transcribe_video_button.click(transcribe_video, inputs=[video_input, video_start_time, video_end_time], outputs=[text_output, text_output_timestamps, transcribe_run_time])
     transcribe_audio_button.click(transcribe_audio, inputs=audio_input, outputs=[text_output, text_output_timestamps, transcribe_run_time])
+    diarizatize_audio_button.click(diarization, inputs=audio_input, outputs=[text_output, text_output_timestamps, transcribe_run_time])
 
 if __name__ == "__main__":
     demo.launch()
