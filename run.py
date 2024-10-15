@@ -239,7 +239,7 @@ def transcribe_audio_with_diarization(audio_filepath):
 
     MIN_DURATION = 1.0
     OUTPUT_DIR = './tmp/chunks/'
-    JSON_OUTPUT_PATH='./transcript_with_speakers.json'
+    JSON_OUTPUT_PATH='./tmp/transcript_with_speakers.json'
 
     start_time = time.time()
 
