@@ -163,6 +163,8 @@ cython_debug/
 
 # project tmp
 tmp/
+.gradio/
+flagged/
 
 #model
 model/
