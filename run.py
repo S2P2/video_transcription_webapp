@@ -45,12 +45,13 @@ def format_time(seconds: float) -> str:
         logging.error(f"Error formatting time: {str(e)}")
         raise
 
-def format_transcription(segments: List) -> Tuple[str, str]:
+def format_transcription(segments: List, offset: float = 0.0) -> Tuple[str, str]:
     """
-    Formats the transcription segments into plain text and timestamped formats.
+    Formats the transcription segments into plain text and timestamped formats, with an optional offset applied to timestamps.
 
     Args:
         segments (list): List of transcribed segments.
+        offset (float, optional): Time in seconds to shift the timestamps to account for video trimming. Defaults to 0.
 
     Returns:
         tuple: (Plain transcription, transcription with timestamps).
@@ -60,8 +61,12 @@ def format_transcription(segments: List) -> Tuple[str, str]:
 
     try:
         for segment in segments:
-            start_time_formatted = format_time(segment.start)
-            end_time_formatted = format_time(segment.end)
+            # Apply the offset to adjust the timestamps
+            start_time_shifted = segment.start + offset
+            end_time_shifted = segment.end + offset
+
+            start_time_formatted = format_time(start_time_shifted)
+            end_time_formatted = format_time(end_time_shifted)
 
             formatted_string = f"[{start_time_formatted} -> {end_time_formatted}] {segment.text}"
             output.append(segment.text)
@@ -134,7 +139,8 @@ def transcribe_video(video_filepath: str, video_start_time: float, video_end_tim
 
         logging.info("Audio extraction completed")
 
-        plain_text, text_with_timestamps, audio_run_time = transcribe(audio_filepath)
+        segments, info = batched_model.transcribe(audio_filepath, batch_size=16)
+        plain_text, text_with_timestamps = format_transcription(segments, offset=video_start_time)
 
         run_time = time.time() - start_time
         logging.info(f"Video transcription completed in {run_time:.2f} seconds")
@@ -151,7 +157,7 @@ def transcribe_video(video_filepath: str, video_start_time: float, video_end_tim
 
 audio_interface = gr.Interface(
     fn=transcribe,
-    inputs=[gr.Audio(type="filepath")],
+    inputs=[gr.Audio(label="Audio", type="filepath")],
     outputs=[
         gr.TextArea(label="Transcript", show_copy_button=True), 
         gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
@@ -162,7 +168,11 @@ audio_interface = gr.Interface(
 
 video_interface = gr.Interface(
     fn=transcribe_video,
-    inputs=[gr.Video(), "number", "number"],
+    inputs=[
+        gr.Video(label="Video"), 
+        gr.Number(label="Start Time for Transcription (seconds)"), 
+        gr.Number(label="End Time for Transcription (seconds)")
+    ],
     outputs=[
         gr.TextArea(label="Transcript", show_copy_button=True), 
         gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
