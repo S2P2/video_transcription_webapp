@@ -1,0 +1,5 @@
+title = "Whisper CT Model Config"
+
+[model]
+name = "terasut/whisper-th-large-v3-combined-ct2"
+compute_type = "float16"

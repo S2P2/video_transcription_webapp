@@ -3,6 +3,7 @@ import os
 import ffmpeg
 import time
 import logging
+import tomlkit
 from typing import List, Tuple
 from torch import cuda
 from faster_whisper import WhisperModel, BatchedInferencePipeline
@@ -11,9 +12,17 @@ from faster_whisper import WhisperModel, BatchedInferencePipeline
 logging.basicConfig(filename='transcription_app_gr5.log', level=logging.INFO, 
                     format='%(asctime)s:%(levelname)s:%(message)s')
 
+try:
+    config = tomlkit.loads(open("config.toml").read())
+    logging.info("Loading config from config.toml")
+
+except Exception as e:
+    logging.error(f"Error loading config: {str(e)}")
+    raise RuntimeError("Failed to load config.") from e
+
 # Whisper model configuration
-WHISPER_CT_MODEL_NAME = "terasut/whisper-th-large-v3-combined-ct2"
-COMPUTE_TYPE = "float16"
+WHISPER_CT_MODEL_NAME = config["model"]["name"]
+COMPUTE_TYPE = config["model"]["compute_type"]
 
 # Check if CUDA is available and set the device accordingly
 device = "cuda" if cuda.is_available() else "cpu"
