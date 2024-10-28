@@ -167,6 +167,6 @@ tmp/
 flagged/
 
 #model
-model/
+cache/
 
 .bak

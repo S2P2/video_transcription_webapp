@@ -9,11 +9,11 @@ from torch import cuda
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
 # Set up logging configuration
-logging.basicConfig(filename='transcription_app_gr5.log', level=logging.INFO, 
+logging.basicConfig(filename='./mount/transcription_app.log', level=logging.INFO, 
                     format='%(asctime)s:%(levelname)s:%(message)s')
 
 try:
-    config = tomlkit.loads(open("config.toml").read())
+    config = tomlkit.loads(open("./mount/config.toml").read())
     logging.info("Loading config from config.toml")
 
 except Exception as e:
@@ -168,8 +168,8 @@ audio_interface = gr.Interface(
     fn=transcribe,
     inputs=[gr.Audio(label="Audio", type="filepath")],
     outputs=[
-        gr.TextArea(label="Transcript", show_copy_button=True), 
-        gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
+        gr.TextArea(label="Transcript", show_label=True, show_copy_button=True), 
+        gr.TextArea(label="Transcript with timestamps", show_label=True, show_copy_button=True), 
         gr.Number(label="Total run time (seconds): ", precision=2),
     ],
     description="Using Faster-Whisper variant of https://huggingface.co/biodatlab/whisper-th-large-v3-combined to transcribe audio"
@@ -183,8 +183,8 @@ video_interface = gr.Interface(
         gr.Number(label="End Time for Transcription (seconds)")
     ],
     outputs=[
-        gr.TextArea(label="Transcript", show_copy_button=True), 
-        gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
+        gr.TextArea(label="Transcript", show_label=True, show_copy_button=True), 
+        gr.TextArea(label="Transcript with timestamps", show_label=True, show_copy_button=True), 
         gr.Number(label="Total run time (seconds): ", precision=2),
     ],
     description="Using ffmpeg to extract audio and Faster-Whisper variant of https://huggingface.co/biodatlab/whisper-th-large-v3-combined to transcribe audio"
