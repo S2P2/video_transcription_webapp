@@ -52,9 +52,11 @@ fsspec==2024.9.0
     #   torch
 future==1.0.0
     # via ffmpeg-python
-gradio==5.1.0
+gradio==5.23.0
     # via -r requirements.in
-gradio-client==1.4.0
+gradio-client==1.8.0
+    # via gradio
+groovy==0.1.2
     # via gradio
 h11==0.14.0
     # via
@@ -66,7 +68,8 @@ httpx==0.27.2
     # via
     #   gradio
     #   gradio-client
-huggingface-hub==0.26.0
+    #   safehttpx
+huggingface-hub==0.29.3
     # via
     #   faster-whisper
     #   gradio
@@ -160,7 +163,7 @@ pygments==2.18.0
     # via rich
 python-dateutil==2.9.0.post0
     # via pandas
-python-multipart==0.0.12
+python-multipart==0.0.20
     # via gradio
 pytz==2024.2
     # via pandas
@@ -173,7 +176,9 @@ requests==2.32.3
     # via huggingface-hub
 rich==13.9.2
     # via typer
-ruff==0.7.0
+ruff==0.11.2
+    # via gradio
+safehttpx==0.1.6
     # via gradio
 semantic-version==2.10.0
     # via gradio
@@ -186,7 +191,9 @@ sniffio==1.3.1
     #   anyio
     #   httpx
 starlette==0.40.0
-    # via fastapi
+    # via
+    #   fastapi
+    #   gradio
 sympy==1.13.3
     # via
     #   onnxruntime
