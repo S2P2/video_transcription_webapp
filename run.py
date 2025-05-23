@@ -10,6 +10,7 @@ from faster_whisper import WhisperModel, BatchedInferencePipeline
 import json # Added
 from omegaconf import OmegaConf # Added
 from nemo.collections.asr.models.msdd_models import NeuralDiarizer # Added
+import tempfile # Added for temporary directory management
 
 # Set up logging configuration
 logging.basicConfig(filename='transcription_app_gr5.log', level=logging.INFO, 
@@ -57,37 +58,102 @@ def format_time(seconds: float) -> str:
         logging.error(f"Error formatting time: {str(e)}")
         raise
 
-def format_transcription(segments: List, offset: float = 0.0) -> Tuple[str, str]:
-    '''
-    Formats the transcription segments into plain text and timestamped formats, with an optional offset applied to timestamps.
+def parse_rttm_file(rttm_filepath: str) -> List[Tuple[str, float, float]]:
+    """
+    Parses an RTTM file to extract speaker diarization information.
 
     Args:
-        segments (list): List of transcribed segments.
-        offset (float, optional): Time in seconds to shift the timestamps to account for video trimming. Defaults to 0.
+        rttm_filepath (str): Path to the RTTM file.
 
     Returns:
-        tuple: (Plain transcription, transcription with timestamps).
+        List[Tuple[str, float, float]]: A list of tuples, where each tuple
+                                         contains (speaker_id, start_time, end_time).
+                                         Returns an empty list if the file is not found or
+                                         if there are issues parsing the file.
+    """
+    speaker_segments = []
+    try:
+        with open(rttm_filepath, 'r') as f:
+            for line_number, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue  # Skip empty lines
+
+                parts = line.split()
+                # RTTM format: SPEAKER [file_id] 1 [start_time] [duration] <NA> <NA> [speaker_id] <NA> <NA>
+                # We need fields at index 3 (start_time), 4 (duration), 7 (speaker_id)
+                if len(parts) >= 8 and parts[0] == "SPEAKER":
+                    try:
+                        start_time = float(parts[3])
+                        duration = float(parts[4])
+                        speaker_id = parts[7]
+                        end_time = start_time + duration
+                        speaker_segments.append((speaker_id, start_time, end_time))
+                    except ValueError:
+                        logging.warning(f"Skipping malformed RTTM line {line_number} in {rttm_filepath}: Could not convert time/duration to float. Line: '{line}'")
+                    except IndexError:
+                        logging.warning(f"Skipping malformed RTTM line {line_number} in {rttm_filepath}: Not enough fields. Line: '{line}'")
+                else:
+                    logging.warning(f"Skipping malformed RTTM line {line_number} in {rttm_filepath}: Does not start with SPEAKER or not enough fields. Line: '{line}'")
+    except FileNotFoundError:
+        logging.error(f"RTTM file not found: {rttm_filepath}")
+        return []  # Return empty list as per previous error handling patterns
+    except Exception as e:
+        logging.error(f"Error parsing RTTM file {rttm_filepath}: {str(e)}", exc_info=True)
+        return [] # Return empty list in case of other unexpected errors
+    
+    return speaker_segments
+
+def format_transcription(segments: List, rttm_segments: List, offset: float = 0.0) -> Tuple[str, str]:
+    '''
+    Formats the transcription segments into plain text and timestamped formats, 
+    attributing speakers based on RTTM segments, with an optional offset applied to timestamps.
+
+    Args:
+        segments (list): List of transcribed segments from Whisper.
+        rttm_segments (list): List of (speaker_id, start_time, end_time) tuples from RTTM.
+        offset (float, optional): Time in seconds to shift the timestamps. Defaults to 0.
+
+    Returns:
+        tuple: (Plain transcription with speaker IDs, transcription with timestamps and speaker IDs).
     '''
     output = []
     output_with_timestamps = []
 
     try:
         for segment in segments:
-            # Apply the offset to adjust the timestamps
-            start_time_shifted = segment.start + offset
-            end_time_shifted = segment.end + offset
+            segment_start_abs = segment.start + offset
+            segment_end_abs = segment.end + offset # segment.end is already absolute in this context
+            start_time_formatted = format_time(segment_start_abs)
 
-            start_time_formatted = format_time(start_time_shifted)
-            end_time_formatted = format_time(end_time_shifted)
+            speaker_id_for_segment = "UnknownSpeaker"
+            current_max_overlap = 0.0
 
-            formatted_string = f"[{start_time_formatted} -> {end_time_formatted}] {segment.text}"
-            output.append(segment.text)
+            if rttm_segments: # Only try to find speaker if rttm_segments is not empty
+                for rttm_speaker_id, rttm_start, rttm_end in rttm_segments:
+                    # Ensure RTTM times are absolute; they should be if parse_rttm_file provides absolute times
+                    # The offset is only for Whisper segments relative to a potential video trim point.
+                    # RTTM times are usually relative to the start of the audio file being diarized.
+                    
+                    overlap = max(0, min(segment_end_abs, rttm_end) - max(segment_start_abs, rttm_start))
+                    if overlap > current_max_overlap:
+                        current_max_overlap = overlap
+                        speaker_id_for_segment = rttm_speaker_id
+            
+            # If current_max_overlap is still 0 after checking all rttm_segments,
+            # speaker_id_for_segment remains "UnknownSpeaker"
+
+            # New format for timestamped output
+            formatted_string = f"[{start_time_formatted}] {speaker_id_for_segment}: {segment.text}"
+            
+            # New format for plain text output
+            output.append(f"{speaker_id_for_segment}: {segment.text}")
             output_with_timestamps.append(formatted_string)
 
         return "\\n".join(output), "\\n".join(output_with_timestamps)
     except Exception as e:
-        logging.error(f"Error formatting transcription: {str(e)}")
-        raise
+        logging.error(f"Error formatting transcription with speaker IDs: {str(e)}", exc_info=True) # Log specific error
+        raise # Re-raise the exception to be handled by the caller
 
 def diarize_audio(audio_filepath: str, output_dir: str, config_path: str) -> str:
     '''
@@ -193,8 +259,22 @@ echo
         start_time = time.time()
         logging.info(f"Starting audio transcription for: {audio_filepath}")
 
+        rttm_segments = []  # Initialize with empty list for fallback
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir_path:
+                logging.info(f"Created temporary directory for diarization: {temp_dir_path}")
+                predicted_rttm_filepath = diarize_audio(audio_filepath, temp_dir_path, 'diar_infer_telephonic.yaml')
+                if predicted_rttm_filepath and os.path.exists(predicted_rttm_filepath):
+                    rttm_segments = parse_rttm_file(predicted_rttm_filepath)
+                else:
+                    logging.warning(f"RTTM file not generated or found for {audio_filepath}. Proceeding without speaker diarization.")
+        except Exception as e_diar:
+            logging.error(f"Error during diarization step for {audio_filepath}: {e_diar}. Proceeding without speaker diarization.", exc_info=True)
+            # rttm_segments remains empty
+
         segments, info = batched_model.transcribe(audio_filepath, batch_size=16)
-        plain_text, text_with_timestamps = format_transcription(segments)
+        # Pass rttm_segments (could be empty) to format_transcription
+        plain_text, text_with_timestamps = format_transcription(segments, rttm_segments) 
 
         run_time = time.time() - start_time
         logging.info(f"Audio transcription completed in {run_time:.2f} seconds")
@@ -241,8 +321,24 @@ echo
 
         logging.info("Audio extraction completed")
 
+        rttm_segments = [] # Initialize with empty list for fallback
+        try:
+            # Create a new, separate temporary directory for diarization outputs for the extracted audio.
+            with tempfile.TemporaryDirectory() as diar_output_dir:
+                logging.info(f"Created temporary directory for video audio diarization: {diar_output_dir}")
+                # Use the extracted audio_filepath for diarization
+                predicted_rttm_filepath = diarize_audio(audio_filepath, diar_output_dir, 'diar_infer_telephonic.yaml')
+                if predicted_rttm_filepath and os.path.exists(predicted_rttm_filepath):
+                    rttm_segments = parse_rttm_file(predicted_rttm_filepath)
+                else:
+                    logging.warning(f"RTTM file not generated or found for extracted audio {audio_filepath}. Proceeding without speaker diarization.")
+        except Exception as e_diar:
+            logging.error(f"Error during diarization step for extracted audio {audio_filepath}: {e_diar}. Proceeding without speaker diarization.", exc_info=True)
+            # rttm_segments remains empty
+
         segments, info = batched_model.transcribe(audio_filepath, batch_size=16)
-        plain_text, text_with_timestamps = format_transcription(segments, offset=video_start_time)
+        # Pass rttm_segments (could be empty) and existing offset to format_transcription
+        plain_text, text_with_timestamps = format_transcription(segments, rttm_segments, offset=video_start_time)
 
         run_time = time.time() - start_time
         logging.info(f"Video transcription completed in {run_time:.2f} seconds")
@@ -261,8 +357,8 @@ audio_interface = gr.Interface(
     fn=transcribe,
     inputs=[gr.Audio(label="Audio", type="filepath")],
     outputs=[
-        gr.TextArea(label="Transcript", show_copy_button=True), 
-        gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
+        gr.TextArea(label="Transcript (with speaker names)", show_copy_button=True), 
+        gr.TextArea(label="Timestamped Transcript (with speaker names)", show_copy_button=True), 
         gr.Number(label="Total run time (seconds): ", precision=2),
     ],
     description="Using Faster-Whisper variant of https://huggingface.co/biodatlab/whisper-th-large-v3-combined to transcribe audio"
@@ -276,8 +372,8 @@ video_interface = gr.Interface(
         gr.Number(label="End Time for Transcription (seconds)")
     ],
     outputs=[
-        gr.TextArea(label="Transcript", show_copy_button=True), 
-        gr.TextArea(label="Transcript with timestamps", show_copy_button=True), 
+        gr.TextArea(label="Transcript (with speaker names)", show_copy_button=True), 
+        gr.TextArea(label="Timestamped Transcript (with speaker names)", show_copy_button=True), 
         gr.Number(label="Total run time (seconds): ", precision=2),
     ],
     description="Using ffmpeg to extract audio and Faster-Whisper variant of https://huggingface.co/biodatlab/whisper-th-large-v3-combined to transcribe audio"
