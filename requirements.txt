@@ -215,7 +215,7 @@ typing-extensions==4.12.2
     #   typer
 tzdata==2024.2
     # via pandas
-urllib3==2.2.3
+urllib3==2.5.0
     # via requests
 uvicorn==0.32.0
     # via gradio
